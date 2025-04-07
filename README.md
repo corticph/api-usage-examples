@@ -13,7 +13,7 @@ For API details, see **[Corti’s API Documentation](https://docs.corti.ai)**. �
 
 ### 1️⃣ **Ambient Scribe – Live Transcription & Fact-Based Documentation**  
 📄 Automatically generate structured clinical notes from doctor-patient conversations.  
-🔗 [View the implementation](./Web/AmbientScribe.README.md)  
+🔗 [View the implementation](./Web/AmbientScribe/README.md)  
 
 ### 2️⃣ **Dictation – AI-Powered Speech-to-Text**  
 🎙️ Capture and transcribe live dictation with customizable voice commands.  
