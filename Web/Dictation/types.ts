@@ -9,7 +9,6 @@ export interface DictationConfig {
     interimResults: boolean;
     spokenPunctuation: boolean;
     automaticPunctuation: boolean;
-    model: string;
     commands?: Command[];
 }
 
