@@ -9,7 +9,6 @@ const DEFAULT_CONFIG: DictationConfig = {
     interimResults: true,
     spokenPunctuation: true,
     automaticPunctuation: true,
-    model: "others",
     commands: [
       {
         command: "go to next section",
