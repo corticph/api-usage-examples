@@ -26,6 +26,30 @@
     </label>
   </fieldset>
 
+  <!-- Remote source option (only relevant in virtual mode) -->
+  <fieldset id="remote-source-options" style="display:none">
+    <legend>Remote audio source</legend>
+    <label>
+      <input type="radio" name="remote-source" value="webrtc" checked />
+      WebRTC peer connection
+    </label>
+    <br />
+    <label>
+      <input type="radio" name="remote-source" value="display" />
+      Screen / tab capture (getDisplayMedia)
+    </label>
+  </fieldset>
+
+  <script>
+    // Show/hide remote source options when the mode changes.
+    document.querySelectorAll('input[name="mode"]').forEach(function (radio) {
+      radio.addEventListener("change", function () {
+        document.getElementById("remote-source-options").style.display =
+          this.value === "virtual" ? "" : "none";
+      });
+    });
+  </script>
+
   <!-- Controls -->
   <button id="start-call">Start Call</button>
   <button id="end-call" disabled>End Call</button>

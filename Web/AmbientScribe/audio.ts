@@ -1,9 +1,12 @@
 /**
  * audio.ts — Audio stream utilities for AmbientScribe.
  *
- * Exposes two methods for obtaining audio streams:
+ * Exposes three methods for obtaining audio streams:
  *   1. getMicrophoneStream()          — local microphone (works in both modes)
  *   2. getRemoteParticipantStream()   — remote party via WebRTC (virtual consultations)
+ *   3. getDisplayMediaStream()        — screen/tab/window audio via getDisplayMedia
+ *                                       (alternative to WebRTC for virtual consultations,
+ *                                        e.g. capturing audio from a video-call app)
  *
  * Also provides mergeMediaStreams() for combining multiple streams into a
  * single multi-channel stream before sending to Corti.
@@ -66,7 +69,59 @@ export function getRemoteParticipantStream(
 }
 
 // ---------------------------------------------------------------------------
-// 3. Stream merging (used in virtual consultation mode)
+// 3. Screen / tab audio capture (getDisplayMedia)
+// ---------------------------------------------------------------------------
+
+/**
+ * Captures audio from a screen, window, or browser tab using getDisplayMedia.
+ *
+ * This is an alternative to getRemoteParticipantStream() for virtual
+ * consultations where the remote party's audio comes through a video-call
+ * app running in another tab or window rather than a direct WebRTC
+ * peer connection you control.
+ *
+ * The browser will show a picker dialog asking which screen/tab to share.
+ * We request both audio and video (some browsers require video to be
+ * requested for tab audio to work) and then strip the video track so only
+ * the audio track remains.
+ *
+ * @returns A MediaStream containing only the audio track from the selected
+ *          screen / tab / window.
+ * @throws If the browser doesn't support getDisplayMedia, the user cancels
+ *         the picker, or the selected source has no audio track.
+ */
+export async function getDisplayMediaStream(): Promise<MediaStream> {
+  if (!navigator.mediaDevices?.getDisplayMedia) {
+    throw new Error("getDisplayMedia is not supported in this browser");
+  }
+
+  // Request both audio and video — some browsers (e.g. Chrome) only expose
+  // tab audio when video is also requested.
+  const stream = await navigator.mediaDevices.getDisplayMedia({
+    audio: true,
+    video: true,
+  });
+
+  // Remove all video tracks — we only need the audio.
+  for (const track of stream.getTracks()) {
+    if (track.kind === "video") {
+      track.stop();
+      stream.removeTrack(track);
+    }
+  }
+
+  if (!stream.getAudioTracks().length) {
+    throw new Error(
+      "The selected source does not have an audio track. " +
+        "Make sure to pick a browser tab that is playing audio."
+    );
+  }
+
+  return stream;
+}
+
+// ---------------------------------------------------------------------------
+// 4. Stream merging (used in virtual consultation mode)
 // ---------------------------------------------------------------------------
 
 /**

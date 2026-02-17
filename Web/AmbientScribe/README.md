@@ -3,7 +3,7 @@
 A single demo app using the [`@corti/sdk`](https://www.npmjs.com/package/@corti/sdk) for **live audio transcription** and **fact-based documentation**. Toggle between two modes from the UI:
 
 - **Single Microphone** – one audio source with automatic speaker diarization.
-- **Virtual Consultation** – local microphone (doctor) + WebRTC stream (patient) merged into a multi-channel stream.
+- **Virtual Consultation** – local microphone (doctor) + remote audio (patient) merged into a multi-channel stream. The remote audio can come from either a **WebRTC peer connection** or **screen/tab capture** (`getDisplayMedia`).
 
 The demo is split into **server** (auth, interaction management) and **client** (audio capture, streaming, event display).
 
@@ -21,7 +21,7 @@ npm i @corti/sdk
 AmbientScribe/
   server.ts      # Server-side: OAuth2 auth, interaction creation, scoped token
   client.ts      # Client-side: stream connection, audio capture, event handling
-  audio.ts       # Audio utilities: getMicrophoneStream(), getRemoteParticipantStream(), mergeMediaStreams()
+  audio.ts       # Audio utilities: getMicrophoneStream(), getRemoteParticipantStream(), getDisplayMediaStream(), mergeMediaStreams()
   index.html     # Minimal UI with mode toggle (output goes to console)
   README.md
 ```
@@ -66,14 +66,18 @@ const streamToken = await auth.getToken({
 
 ## Audio Utilities (`audio.ts`)
 
-Two methods for obtaining audio streams, plus a merge utility:
+Three methods for obtaining audio streams, plus a merge utility:
 
 ```ts
 // 1. Local microphone
 const micStream = await getMicrophoneStream();
 
-// 2. Remote participant from a WebRTC peer connection
+// 2a. Remote participant from a WebRTC peer connection
 const remoteStream = getRemoteParticipantStream(peerConnection);
+
+// 2b. OR: screen / tab capture (alternative when you don't control the peer connection,
+//     e.g. the video-call app runs in another browser tab)
+const remoteStream = await getDisplayMediaStream();
 
 // 3. Merge into a single multi-channel stream (virtual consultation mode)
 const { stream, endStream } = mergeMediaStreams([micStream, remoteStream]);
@@ -116,9 +120,16 @@ mediaRecorder.start(200);
 
 ### Virtual Consultation Mode
 
+The remote audio source is selected from the UI — either a WebRTC peer connection or screen/tab capture:
+
 ```ts
 const microphoneStream = await getMicrophoneStream();
+
+// Option A: WebRTC
 const remoteStream = getRemoteParticipantStream(peerConnection);
+
+// Option B: Screen / tab capture (getDisplayMedia)
+const remoteStream = await getDisplayMediaStream();
 
 // channel 0 = doctor, channel 1 = patient
 const { stream, endStream } = mergeMediaStreams([microphoneStream, remoteStream]);
@@ -142,6 +153,7 @@ streamSocket.on("fact", (data) => console.log("Fact:", data));
 A minimal page with:
 
 - Radio buttons to toggle between **Single Microphone** and **Virtual Consultation** mode.
+- When **Virtual Consultation** is selected, a second radio group appears to choose between **WebRTC** and **Screen / tab capture** as the remote audio source.
 - **Start Call** / **End Call** buttons.
 - All output goes to the browser console.
 

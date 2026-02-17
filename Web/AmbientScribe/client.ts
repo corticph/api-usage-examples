@@ -7,10 +7,17 @@
  *               Uses only getMicrophoneStream().
  *
  *   "virtual" — Virtual consultation (doctor + patient).
- *               Uses getMicrophoneStream() for the local doctor mic and
- *               getRemoteParticipantStream() for the patient's WebRTC audio,
- *               then merges them into a multi-channel stream so Corti can
- *               attribute speech to each participant without diarization.
+ *               Uses getMicrophoneStream() for the local doctor mic and a
+ *               remote audio source for the patient, then merges them into a
+ *               multi-channel stream so Corti can attribute speech to each
+ *               participant without diarization.
+ *
+ *               The remote source can come from either:
+ *                 - "webrtc"  — an RTCPeerConnection (getRemoteParticipantStream)
+ *                 - "display" — screen/tab capture (getDisplayMediaStream),
+ *                               useful when the video-call app is running in
+ *                               another tab and you don't have direct access
+ *                               to the peer connection.
  *
  * All transcript and fact events are logged to the browser console.
  */
@@ -19,6 +26,7 @@ import { CortiClient, CortiEnvironment } from "@corti/sdk";
 import {
   getMicrophoneStream,
   getRemoteParticipantStream,
+  getDisplayMediaStream,
   mergeMediaStreams,
 } from "./audio";
 
@@ -27,6 +35,9 @@ import {
 // ---------------------------------------------------------------------------
 
 type Mode = "single" | "virtual";
+
+/** How the remote participant's audio is captured in virtual mode. */
+type RemoteSource = "webrtc" | "display";
 
 /** Everything we need to tear down a running session. */
 interface ActiveSession {
@@ -49,14 +60,18 @@ interface ActiveSession {
  * @param accessToken    Stream-scoped token received from the server.
  * @param interactionId  Interaction ID received from the server.
  * @param mode           "single" for one mic, "virtual" for doctor + patient.
- * @param peerConnection Required when mode is "virtual" — the RTCPeerConnection
- *                        carrying the remote participant's audio.
+ * @param remoteSource   How to capture the remote participant's audio in
+ *                        virtual mode: "webrtc" or "display". Ignored in
+ *                        single mode.
+ * @param peerConnection Required when remoteSource is "webrtc" — the
+ *                        RTCPeerConnection carrying the remote audio.
  * @returns An object with an `endCall()` method for cleanup.
  */
 async function startSession(
   accessToken: string,
   interactionId: string,
   mode: Mode,
+  remoteSource: RemoteSource = "webrtc",
   peerConnection?: RTCPeerConnection
 ): Promise<ActiveSession> {
   // -- 1. Create a client scoped to streaming only -------------------------
@@ -77,7 +92,7 @@ async function startSession(
 
   // -- 3. Acquire audio depending on mode ----------------------------------
   //    "single"  → just the local microphone
-  //    "virtual" → local mic + remote WebRTC audio, merged into one stream
+  //    "virtual" → local mic + remote audio (WebRTC or display), merged
 
   const microphoneStream = await getMicrophoneStream();
   console.log(`[${mode}] Microphone stream acquired`);
@@ -85,17 +100,29 @@ async function startSession(
   // audioStream is what we feed into MediaRecorder.
   // endMergedStream is only set when we merge (virtual mode).
   let audioStream: MediaStream;
+  let remoteStream: MediaStream | undefined;
   let endMergedStream: (() => void) | undefined;
 
   if (mode === "virtual") {
-    if (!peerConnection) {
-      throw new Error("Virtual mode requires an RTCPeerConnection");
+    // Get the remote participant's audio from the chosen source.
+    if (remoteSource === "display") {
+      // Screen / tab capture — the browser will show a picker dialog.
+      // Useful when the video-call runs in another tab and you don't
+      // have direct access to the peer connection.
+      remoteStream = await getDisplayMediaStream();
+      console.log("[virtual:display] Display media stream acquired");
+    } else {
+      // WebRTC — pull audio tracks from an existing peer connection.
+      if (!peerConnection) {
+        throw new Error(
+          'Virtual mode with remoteSource "webrtc" requires an RTCPeerConnection'
+        );
+      }
+      remoteStream = getRemoteParticipantStream(peerConnection);
+      console.log("[virtual:webrtc] Remote participant stream acquired");
     }
 
-    const remoteStream = getRemoteParticipantStream(peerConnection);
-    console.log("[virtual] Remote participant stream acquired");
-
-    // Merge: channel 0 = doctor (mic), channel 1 = patient (WebRTC)
+    // Merge: channel 0 = doctor (mic), channel 1 = patient (remote)
     const merged = mergeMediaStreams([microphoneStream, remoteStream]);
     audioStream = merged.stream;
     endMergedStream = merged.endStream;
@@ -138,6 +165,9 @@ async function startSession(
       // Release the merged stream (virtual mode only)
       endMergedStream?.();
 
+      // Release the remote stream tracks (virtual mode only)
+      remoteStream?.getAudioTracks().forEach((track) => track.stop());
+
       // Release the raw microphone track(s)
       microphoneStream.getAudioTracks().forEach((track) => track.stop());
 
@@ -163,19 +193,30 @@ async function handleStart() {
   );
   const mode: Mode = (modeInput?.value as Mode) ?? "single";
 
+  // Read remote source preference (only relevant in virtual mode)
+  const remoteSourceInput = document.querySelector<HTMLInputElement>(
+    'input[name="remote-source"]:checked'
+  );
+  const remoteSource: RemoteSource =
+    (remoteSourceInput?.value as RemoteSource) ?? "webrtc";
+
   try {
     // Fetch interaction ID + scoped token from the server (see server.ts)
     const response = await fetch("/api/start-session", { method: "POST" });
     const { interactionId, accessToken } = await response.json();
 
-    // In virtual mode you would pass a real RTCPeerConnection here.
+    // In virtual/webrtc mode you would pass a real RTCPeerConnection here.
     // For this demo we pass undefined — replace with your WebRTC connection.
-    const peerConnection = mode === "virtual" ? new RTCPeerConnection() : undefined;
+    const peerConnection =
+      mode === "virtual" && remoteSource === "webrtc"
+        ? new RTCPeerConnection()
+        : undefined;
 
     activeSession = await startSession(
       accessToken,
       interactionId,
       mode,
+      remoteSource,
       peerConnection
     );
 
