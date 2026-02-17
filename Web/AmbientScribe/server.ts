@@ -89,6 +89,7 @@ const app = express();
 
 // Serve the front-end files (index.html, client.ts, audio.ts) from this directory.
 app.use(express.static(path.join(__dirname)));
+app.use(express.json());
 
 // POST /api/start-session
 // Creates an interaction + scoped token and returns them to the client.
@@ -105,6 +106,61 @@ app.post("/api/start-session", async (_req, res) => {
   } catch (err) {
     console.error("Failed to start session:", err);
     res.status(500).json({ error: "Failed to start session" });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 5. POST /api/create-document
+//    Fetches the facts collected during the consultation, then generates a
+//    clinical document from them using the Corti Documents API.
+// ---------------------------------------------------------------------------
+
+app.post("/api/create-document", async (req, res) => {
+  try {
+    const { interactionId } = req.body;
+
+    if (!interactionId) {
+      res.status(400).json({ error: "Missing interactionId" });
+      return;
+    }
+
+    // Step 1: Fetch facts collected during the consultation
+    const facts = await client.facts.list(interactionId);
+    console.log(`Fetched ${facts.length} facts for interaction ${interactionId}`);
+
+    // Step 2: Map facts into the format expected by the Documents API
+    const factsContext = facts.map((fact: { text: string; group: string; source: string }) => ({
+      text: fact.text,
+      group: fact.group,
+      source: fact.source,
+    }));
+
+    // Step 3: Create a document using the collected facts
+    const document = await client.documents.create(interactionId, {
+      context: [
+        {
+          type: "facts",
+          data: factsContext,
+        },
+      ],
+      template: {
+        sections: [
+          { key: "corti-hpi" },
+          { key: "corti-allergies" },
+          { key: "corti-social-history" },
+          { key: "corti-plan" },
+        ],
+      },
+      outputLanguage: "en",
+      name: "Consultation Document",
+      documentationMode: "routed_parallel",
+    });
+
+    console.log("Document created:", document);
+    res.json({ document });
+  } catch (err) {
+    console.error("Failed to create document:", err);
+    res.status(500).json({ error: "Failed to create document" });
   }
 });
 

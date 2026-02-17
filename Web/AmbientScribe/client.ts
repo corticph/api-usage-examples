@@ -181,6 +181,7 @@ async function startSession(
 // ---------------------------------------------------------------------------
 
 let activeSession: ActiveSession | null = null;
+let currentInteractionId: string | null = null;
 
 /**
  * Fetches session credentials from the server and starts streaming.
@@ -212,6 +213,8 @@ async function handleStart() {
         ? new RTCPeerConnection()
         : undefined;
 
+    currentInteractionId = interactionId;
+
     activeSession = await startSession(
       accessToken,
       interactionId,
@@ -221,7 +224,7 @@ async function handleStart() {
     );
 
     // Update button states
-    setButtonStates(true);
+    setButtonStates("running");
     console.log(`Session started in "${mode}" mode`);
   } catch (err) {
     console.error("Failed to start session:", err);
@@ -232,17 +235,63 @@ async function handleStart() {
 function handleEnd() {
   activeSession?.endConsultation();
   activeSession = null;
-  setButtonStates(false);
+  setButtonStates("stopped");
 }
 
-/** Toggle Start / End button enabled states. */
-function setButtonStates(isRunning: boolean) {
+/**
+ * Calls the server to fetch facts and generate a clinical document
+ * from the consultation that just ended.
+ */
+async function handleCreateDocument() {
+  if (!currentInteractionId) {
+    console.error("No interaction ID available — start a consultation first");
+    return;
+  }
+
+  const createBtn = document.getElementById("create-document") as HTMLButtonElement;
+  const statusMessage = document.getElementById("status-message") as HTMLElement;
+  const documentOutput = document.getElementById("document-output") as HTMLPreElement;
+
+  createBtn.disabled = true;
+  statusMessage.innerHTML = "<em>Creating document…</em>";
+  documentOutput.style.display = "none";
+
+  try {
+    const response = await fetch("/api/create-document", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ interactionId: currentInteractionId }),
+    });
+
+    const { document, error } = await response.json();
+
+    if (error) {
+      throw new Error(error);
+    }
+
+    console.log("Document created:", document);
+    statusMessage.innerHTML = "<em>Document created successfully.</em>";
+    documentOutput.textContent = JSON.stringify(document, null, 2);
+    documentOutput.style.display = "";
+  } catch (err) {
+    console.error("Failed to create document:", err);
+    statusMessage.innerHTML = "<em>Failed to create document — see console.</em>";
+    createBtn.disabled = false;
+  }
+}
+
+/** Update button states based on the consultation lifecycle. */
+function setButtonStates(state: "idle" | "running" | "stopped") {
   const startBtn = document.getElementById("start-consultation") as HTMLButtonElement;
   const endBtn = document.getElementById("end-consultation") as HTMLButtonElement;
-  if (startBtn) startBtn.disabled = isRunning;
-  if (endBtn) endBtn.disabled = !isRunning;
+  const createBtn = document.getElementById("create-document") as HTMLButtonElement;
+
+  if (startBtn) startBtn.disabled = state === "running";
+  if (endBtn) endBtn.disabled = state !== "running";
+  if (createBtn) createBtn.disabled = state !== "stopped";
 }
 
 // Attach handlers once the DOM is ready.
 document.getElementById("start-consultation")?.addEventListener("click", handleStart);
 document.getElementById("end-consultation")?.addEventListener("click", handleEnd);
+document.getElementById("create-document")?.addEventListener("click", handleCreateDocument);

@@ -53,8 +53,10 @@
   <!-- Controls -->
   <button id="start-consultation">Start Consultation</button>
   <button id="end-consultation" disabled>End Consultation</button>
+  <button id="create-document" disabled>Create Document</button>
 
-  <p><em>Open the browser console to see transcripts and facts.</em></p>
+  <p id="status-message"><em>Open the browser console to see transcripts and facts.</em></p>
+  <pre id="document-output" style="display:none; white-space:pre-wrap; background:#f5f5f5; padding:1rem; border-radius:4px; max-height:400px; overflow:auto;"></pre>
 
   <script type="module" src="./client.ts"></script>
 </body>
