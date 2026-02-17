@@ -5,9 +5,10 @@
   "main": "server.ts",
   "type": "module",
   "scripts": {
-    "dev": "ts-node --esm server.ts",
+    "build:client": "esbuild client.ts --bundle --outfile=dist/client.js --format=iife --global-name=AmbientScribe",
+    "dev": "npm run build:client && ts-node --esm server.ts",
     "start": "node dist/server.js",
-    "build": "tsc",
+    "build": "npm run build:client && tsc",
     "clean": "rm -rf dist"
   },
   "keywords": ["corti", "audio", "transcription", "clinical-documentation"],
@@ -20,6 +21,7 @@
   "devDependencies": {
     "@types/express": "^4.17.21",
     "@types/node": "^20.10.6",
+    "esbuild": "^0.24.0",
     "typescript": "^5.3.3",
     "ts-node": "^10.9.2"
   }

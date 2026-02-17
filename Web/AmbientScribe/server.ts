@@ -91,7 +91,7 @@ async function getScopedStreamToken() {
 
 const app = express();
 
-// Serve the front-end files (index.html, client.ts, audio.ts) from this directory.
+// Serve the front-end files (index.html, dist/client.js) from this directory.
 app.use(express.static(path.join(__dirname)));
 app.use(express.json());
 
@@ -102,9 +102,10 @@ app.post("/api/start-session", async (_req, res) => {
     const interaction = await createInteraction();
     const streamToken = await getScopedStreamToken();
 
-    // The client only receives the interaction ID and a limited-scope token.
+    // The client only receives the interaction ID, tenant name, and a limited-scope token.
     res.json({
       interactionId: interaction.id,
+      tenantName: TENANT_NAME,
       accessToken: streamToken.accessToken,
     });
   } catch (err) {

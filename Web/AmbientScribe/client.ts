@@ -1,25 +1,14 @@
 /**
- * client.ts — Browser-side AmbientScribe demo.
+ * client.ts — Corti SDK streaming integration for AmbientScribe.
  *
- * Supports two modes toggled from index.html:
+ * Provides a single entry point — startSession() — that:
+ *   1. Creates a CortiClient with a stream-scoped access token.
+ *   2. Connects to the Corti streaming WebSocket.
+ *   3. Acquires audio depending on the selected mode.
+ *   4. Streams audio to Corti in 200 ms chunks.
+ *   5. Emits transcript and fact events via callbacks.
  *
- *   "single"  — Single microphone with automatic speaker diarization.
- *               Uses only getMicrophoneStream().
- *
- *   "virtual" — Virtual consultation (doctor + patient).
- *               Uses getMicrophoneStream() for the local doctor mic and a
- *               remote audio source for the patient, then merges them into a
- *               multi-channel stream so Corti can attribute speech to each
- *               participant without diarization.
- *
- *               The remote source can come from either:
- *                 - "webrtc"  — an RTCPeerConnection (getRemoteParticipantStream)
- *                 - "display" — screen/tab capture (getDisplayMediaStream),
- *                               useful when the video-call app is running in
- *                               another tab and you don't have direct access
- *                               to the peer connection.
- *
- * All transcript and fact events are logged to the browser console.
+ * This module has no DOM dependencies — all UI wiring lives in index.html.
  */
 
 import { CortiClient, CortiEnvironment } from "@corti/sdk";
@@ -34,18 +23,28 @@ import {
 // Types
 // ---------------------------------------------------------------------------
 
-type Mode = "single" | "virtual";
+export type Mode = "single" | "virtual";
 
 /** How the remote participant's audio is captured in virtual mode. */
-type RemoteSource = "webrtc" | "display";
+export type RemoteSource = "webrtc" | "display";
 
-/** Everything we need to tear down a running session. */
-interface ActiveSession {
+export interface SessionOptions {
+  accessToken: string;
+  interactionId: string;
+  tenantName: string;
+  mode: Mode;
+  remoteSource?: RemoteSource;
+  peerConnection?: RTCPeerConnection;
+  onTranscript?: (data: unknown) => void;
+  onFact?: (data: unknown) => void;
+}
+
+export interface ActiveSession {
   endConsultation: () => void;
 }
 
 // ---------------------------------------------------------------------------
-// Session lifecycle
+// startSession
 // ---------------------------------------------------------------------------
 
 /**
@@ -55,29 +54,28 @@ interface ActiveSession {
  * 2. Connects to the streaming WebSocket via client.stream.connect().
  * 3. Acquires the appropriate audio stream(s) depending on the mode.
  * 4. Pipes audio to Corti in 200 ms chunks via MediaRecorder.
- * 5. Listens for transcript / fact events and logs them.
+ * 5. Fires onTranscript / onFact callbacks for incoming events.
  *
- * @param accessToken    Stream-scoped token received from the server.
- * @param interactionId  Interaction ID received from the server.
- * @param mode           "single" for one mic, "virtual" for doctor + patient.
- * @param remoteSource   How to capture the remote participant's audio in
- *                        virtual mode: "webrtc" or "display". Ignored in
- *                        single mode.
- * @param peerConnection Required when remoteSource is "webrtc" — the
- *                        RTCPeerConnection carrying the remote audio.
  * @returns An object with an `endConsultation()` method for cleanup.
  */
-async function startSession(
-  accessToken: string,
-  interactionId: string,
-  mode: Mode,
-  remoteSource: RemoteSource = "webrtc",
-  peerConnection?: RTCPeerConnection
+export async function startSession(
+  options: SessionOptions
 ): Promise<ActiveSession> {
+  const {
+    accessToken,
+    interactionId,
+    tenantName,
+    mode,
+    remoteSource = "webrtc",
+    peerConnection,
+    onTranscript,
+    onFact,
+  } = options;
+
   // -- 1. Create a client scoped to streaming only -------------------------
   const client = new CortiClient({
     environment: CortiEnvironment.Eu,
-    tenantName: "YOUR_TENANT_NAME",
+    tenantName,
     auth: {
       accessToken, // Token with "stream" scope only
     },
@@ -145,10 +143,12 @@ async function startSession(
   // -- 5. Handle incoming events -------------------------------------------
   streamSocket.on("transcript", (data) => {
     console.log("Transcript:", data);
+    onTranscript?.(data);
   });
 
   streamSocket.on("fact", (data) => {
     console.log("Fact:", data);
+    onFact?.(data);
   });
 
   // -- 6. Return cleanup function ------------------------------------------
@@ -175,123 +175,3 @@ async function startSession(
     },
   };
 }
-
-// ---------------------------------------------------------------------------
-// UI wiring  (called from index.html)
-// ---------------------------------------------------------------------------
-
-let activeSession: ActiveSession | null = null;
-let currentInteractionId: string | null = null;
-
-/**
- * Fetches session credentials from the server and starts streaming.
- * Reads the selected mode from the radio buttons in index.html.
- */
-async function handleStart() {
-  // Read selected mode from the radio group
-  const modeInput = document.querySelector<HTMLInputElement>(
-    'input[name="mode"]:checked'
-  );
-  const mode: Mode = (modeInput?.value as Mode) ?? "single";
-
-  // Read remote source preference (only relevant in virtual mode)
-  const remoteSourceInput = document.querySelector<HTMLInputElement>(
-    'input[name="remote-source"]:checked'
-  );
-  const remoteSource: RemoteSource =
-    (remoteSourceInput?.value as RemoteSource) ?? "webrtc";
-
-  try {
-    // Fetch interaction ID + scoped token from the server (see server.ts)
-    const response = await fetch("/api/start-session", { method: "POST" });
-    const { interactionId, accessToken } = await response.json();
-
-    // In virtual/webrtc mode you would pass a real RTCPeerConnection here.
-    // For this demo we pass undefined — replace with your WebRTC connection.
-    const peerConnection =
-      mode === "virtual" && remoteSource === "webrtc"
-        ? new RTCPeerConnection()
-        : undefined;
-
-    currentInteractionId = interactionId;
-
-    activeSession = await startSession(
-      accessToken,
-      interactionId,
-      mode,
-      remoteSource,
-      peerConnection
-    );
-
-    // Update button states
-    setButtonStates("running");
-    console.log(`Session started in "${mode}" mode`);
-  } catch (err) {
-    console.error("Failed to start session:", err);
-  }
-}
-
-/** Ends the active session and releases all resources. */
-function handleEnd() {
-  activeSession?.endConsultation();
-  activeSession = null;
-  setButtonStates("stopped");
-}
-
-/**
- * Calls the server to fetch facts and generate a clinical document
- * from the consultation that just ended.
- */
-async function handleCreateDocument() {
-  if (!currentInteractionId) {
-    console.error("No interaction ID available — start a consultation first");
-    return;
-  }
-
-  const createBtn = document.getElementById("create-document") as HTMLButtonElement;
-  const statusMessage = document.getElementById("status-message") as HTMLElement;
-  const documentOutput = document.getElementById("document-output") as HTMLPreElement;
-
-  createBtn.disabled = true;
-  statusMessage.innerHTML = "<em>Creating document…</em>";
-  documentOutput.style.display = "none";
-
-  try {
-    const response = await fetch("/api/create-document", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ interactionId: currentInteractionId }),
-    });
-
-    const { document, error } = await response.json();
-
-    if (error) {
-      throw new Error(error);
-    }
-
-    console.log("Document created:", document);
-    statusMessage.innerHTML = "<em>Document created successfully.</em>";
-    documentOutput.textContent = JSON.stringify(document, null, 2);
-    documentOutput.style.display = "";
-  } catch (err) {
-    console.error("Failed to create document:", err);
-    statusMessage.innerHTML = "<em>Failed to create document — see console.</em>";
-    createBtn.disabled = false;
-  }
-}
-
-/** Update button states based on the consultation lifecycle. */
-function setButtonStates(state: "idle" | "running" | "stopped") {
-  const startBtn = document.getElementById("start-consultation") as HTMLButtonElement;
-  const endBtn = document.getElementById("end-consultation") as HTMLButtonElement;
-  const createBtn = document.getElementById("create-document") as HTMLButtonElement;
-
-  if (startBtn) startBtn.disabled = state === "running";
-  if (endBtn) endBtn.disabled = state !== "running";
-  if (createBtn) createBtn.disabled = state !== "stopped";
-}
-
-// Attach handlers once the DOM is ready.
-document.getElementById("start-consultation")?.addEventListener("click", handleStart);
-document.getElementById("end-consultation")?.addEventListener("click", handleEnd);
-document.getElementById("create-document")?.addEventListener("click", handleCreateDocument);
