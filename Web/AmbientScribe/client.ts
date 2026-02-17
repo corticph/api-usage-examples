@@ -41,7 +41,7 @@ type RemoteSource = "webrtc" | "display";
 
 /** Everything we need to tear down a running session. */
 interface ActiveSession {
-  endCall: () => void;
+  endConsultation: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -65,7 +65,7 @@ interface ActiveSession {
  *                        single mode.
  * @param peerConnection Required when remoteSource is "webrtc" — the
  *                        RTCPeerConnection carrying the remote audio.
- * @returns An object with an `endCall()` method for cleanup.
+ * @returns An object with an `endConsultation()` method for cleanup.
  */
 async function startSession(
   accessToken: string,
@@ -153,7 +153,7 @@ async function startSession(
 
   // -- 6. Return cleanup function ------------------------------------------
   return {
-    endCall: () => {
+    endConsultation: () => {
       // Stop recording
       if (mediaRecorder.state !== "inactive") {
         mediaRecorder.stop();
@@ -171,7 +171,7 @@ async function startSession(
       // Release the raw microphone track(s)
       microphoneStream.getAudioTracks().forEach((track) => track.stop());
 
-      console.log(`[${mode}] Call ended — all resources cleaned up`);
+      console.log(`[${mode}] Consultation ended — all resources cleaned up`);
     },
   };
 }
@@ -230,19 +230,19 @@ async function handleStart() {
 
 /** Ends the active session and releases all resources. */
 function handleEnd() {
-  activeSession?.endCall();
+  activeSession?.endConsultation();
   activeSession = null;
   setButtonStates(false);
 }
 
 /** Toggle Start / End button enabled states. */
 function setButtonStates(isRunning: boolean) {
-  const startBtn = document.getElementById("start-call") as HTMLButtonElement;
-  const endBtn = document.getElementById("end-call") as HTMLButtonElement;
+  const startBtn = document.getElementById("start-consultation") as HTMLButtonElement;
+  const endBtn = document.getElementById("end-consultation") as HTMLButtonElement;
   if (startBtn) startBtn.disabled = isRunning;
   if (endBtn) endBtn.disabled = !isRunning;
 }
 
 // Attach handlers once the DOM is ready.
-document.getElementById("start-call")?.addEventListener("click", handleStart);
-document.getElementById("end-call")?.addEventListener("click", handleEnd);
+document.getElementById("start-consultation")?.addEventListener("click", handleStart);
+document.getElementById("end-consultation")?.addEventListener("click", handleEnd);
