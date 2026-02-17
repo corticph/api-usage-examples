@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Corti AmbientScribe Demo</title>
+  <style>
+    body { font-family: sans-serif; max-width: 480px; margin: 2rem auto; }
+    fieldset { margin-bottom: 1rem; }
+    button { margin-right: 0.5rem; padding: 0.4rem 1rem; }
+  </style>
+</head>
+<body>
+  <h1>AmbientScribe</h1>
+
+  <!-- Mode toggle -->
+  <fieldset>
+    <legend>Mode</legend>
+    <label>
+      <input type="radio" name="mode" value="single" checked />
+      Single Microphone (diarization)
+    </label>
+    <br />
+    <label>
+      <input type="radio" name="mode" value="virtual" />
+      Virtual Consultation (doctor + patient)
+    </label>
+  </fieldset>
+
+  <!-- Controls -->
+  <button id="start-call">Start Call</button>
+  <button id="end-call" disabled>End Call</button>
+
+  <p><em>Open the browser console to see transcripts and facts.</em></p>
+
+  <script type="module" src="./client.ts"></script>
+</body>
+</html>
