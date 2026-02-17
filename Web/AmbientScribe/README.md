@@ -9,10 +9,33 @@ After a consultation ends, generate a structured clinical document from the extr
 
 The demo is split into **server** (auth, interaction management, document generation) and **client** (audio capture, streaming, event display, document creation).
 
-## Installation
+---
+
+## Quick Start
+
+**Prerequisites:** Node.js 18+
+
+**Setup (3 steps):**
 
 ```bash
-npm i @corti/sdk
+cp .env.example .env
+# Edit .env with your Corti credentials (CORTI_TENANT_NAME, CORTI_CLIENT_ID, CORTI_CLIENT_SECRET)
+
+npm install
+npm run dev
+```
+
+Open http://localhost:3000 in your browser. Transcript and fact events appear in the browser console.
+
+---
+
+## Installation (Manual)
+
+If setting up without npm:
+
+```bash
+npm i @corti/sdk express
+npm i -D typescript ts-node @types/express @types/node
 ```
 
 ---
@@ -194,6 +217,19 @@ A minimal page with:
 - **Start Consultation** / **End Consultation** buttons to control the streaming session.
 - **Create Document** button — enabled after a consultation ends. Calls the server to fetch facts and generate a clinical document, then displays the result on the page.
 - Transcript and fact events are logged to the browser console.
+
+---
+
+---
+
+## Production Build
+
+For production deployment, compile and run the server:
+
+```bash
+npm run build      # Compile TypeScript to dist/
+npm start          # Run compiled server
+```
 
 ---
 
