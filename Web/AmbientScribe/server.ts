@@ -15,8 +15,12 @@
 
 import express from "express";
 import path from "path";
+import { fileURLToPath } from "url";
 import { CortiClient, CortiAuth, CortiEnvironment } from "@corti/sdk";
 import { randomUUID } from "crypto";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // ---------------------------------------------------------------------------
 // Configuration — replace with your own values or load from environment

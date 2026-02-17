@@ -220,8 +220,6 @@ A minimal page with:
 
 ---
 
----
-
 ## Production Build
 
 For production deployment, compile and run the server:
