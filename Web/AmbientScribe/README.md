@@ -1,11 +1,13 @@
 # Corti AI Platform – Live Transcription & Fact-Based Documentation
 
-A single demo app using the [`@corti/sdk`](https://www.npmjs.com/package/@corti/sdk) for **live audio transcription** and **fact-based documentation**. Toggle between two modes from the UI:
+A single demo app using the [`@corti/sdk`](https://www.npmjs.com/package/@corti/sdk) for **live audio transcription**, **fact extraction**, and **clinical document generation**. Toggle between two modes from the UI:
 
 - **Single Microphone** – one audio source with automatic speaker diarization.
 - **Virtual Consultation** – local microphone (doctor) + remote audio (patient) merged into a multi-channel stream. The remote audio can come from either a **WebRTC peer connection** or **screen/tab capture** (`getDisplayMedia`).
 
-The demo is split into **server** (auth, interaction management) and **client** (audio capture, streaming, event display).
+After a consultation ends, generate a structured clinical document from the extracted facts with a single click.
+
+The demo is split into **server** (auth, interaction management, document generation) and **client** (audio capture, streaming, event display, document creation).
 
 ## Installation
 
@@ -19,10 +21,10 @@ npm i @corti/sdk
 
 ```
 AmbientScribe/
-  server.ts      # Server-side: OAuth2 auth, interaction creation, scoped token
-  client.ts      # Client-side: stream connection, audio capture, event handling
+  server.ts      # Server-side: OAuth2 auth, interaction creation, scoped token, document generation
+  client.ts      # Client-side: stream connection, audio capture, event handling, document creation
   audio.ts       # Audio utilities: getMicrophoneStream(), getRemoteParticipantStream(), getDisplayMediaStream(), mergeMediaStreams()
-  index.html     # Minimal UI with mode toggle (output goes to console)
+  index.html     # Minimal UI with mode toggle, consultation controls, and document output
   README.md
 ```
 
@@ -35,6 +37,7 @@ Runs on your backend. Responsible for:
 1. **Creating a `CortiClient`** with OAuth2 client credentials (never exposed to the browser).
 2. **Creating an interaction** via the REST API.
 3. **Minting a scoped stream token** (only grants WebSocket streaming access).
+4. **Generating a clinical document** from the facts collected during a consultation.
 
 ```ts
 import { CortiClient, CortiAuth, CortiEnvironment } from "@corti/sdk";
@@ -60,6 +63,40 @@ const streamToken = await auth.getToken({
 });
 
 // Send interaction.id + streamToken.accessToken to the client
+```
+
+### Document Generation
+
+After a consultation ends, the server fetches the extracted facts and generates a structured clinical document:
+
+```ts
+// 1. Fetch facts collected during the consultation
+const facts = await client.facts.list(interactionId);
+
+// 2. Create a document from the facts
+const document = await client.documents.create(interactionId, {
+  context: [
+    {
+      type: "facts",
+      data: facts.map((fact) => ({
+        text: fact.text,
+        group: fact.group,
+        source: fact.source,
+      })),
+    },
+  ],
+  template: {
+    sections: [
+      { key: "corti-hpi" },
+      { key: "corti-allergies" },
+      { key: "corti-social-history" },
+      { key: "corti-plan" },
+    ],
+  },
+  outputLanguage: "en",
+  name: "Consultation Document",
+  documentationMode: "routed_parallel",
+});
 ```
 
 ---
@@ -154,8 +191,9 @@ A minimal page with:
 
 - Radio buttons to toggle between **Single Microphone** and **Virtual Consultation** mode.
 - When **Virtual Consultation** is selected, a second radio group appears to choose between **WebRTC** and **Screen / tab capture** as the remote audio source.
-- **Start Call** / **End Call** buttons.
-- All output goes to the browser console.
+- **Start Consultation** / **End Consultation** buttons to control the streaming session.
+- **Create Document** button — enabled after a consultation ends. Calls the server to fetch facts and generate a clinical document, then displays the result on the page.
+- Transcript and fact events are logged to the browser console.
 
 ---
 
