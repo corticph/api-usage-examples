@@ -1,80 +1,161 @@
-# Corti AI Platform – Live Transcription & Fact-Based Documentation  
+# Corti AI Platform – Live Transcription & Fact-Based Documentation
 
-This README provides a guide on using the **Corti AI Platform** WebSocket API for **live audio transcription** and **fact-based documentation**. It includes two approaches:  
-1. **Single audio stream** – Capturing audio from a single microphone.  
-2. **Dual-channel merged streams** – Combining a **local microphone** and a **WebRTC stream** for doctor-patient scenarios.  
+This guide covers using the **Corti AI Platform** via the [`@corti/sdk`](https://www.npmjs.com/package/@corti/sdk) for **live audio transcription** and **fact-based documentation**. It includes two approaches:
+
+1. **Single microphone** – Capturing audio from a single microphone with speaker diarization.
+2. **Virtual consultations** – Merging a **local microphone** and a **WebRTC stream** for doctor-patient scenarios.
+
+Both examples follow a **server/client split**: the server handles authentication and sensitive API calls, while the client handles audio capture and streaming.
+
+## Installation
+
+```bash
+npm i @corti/sdk
+```
 
 ---
 
-## **1. Overview of Configurations**  
+## Architecture
 
-### **Single Stream (Diarization Mode)**  
-This setup uses **one audio source** and **speaker diarization** to distinguish multiple speakers in the same channel automatically.  
+### Server (`server.ts`)
 
-```ts
-const DEFAULT_CONFIG: Config = {
-  type: "config",
-  configuration: {
-    transcription: {
-      primaryLanguage: "en",
-      isDiarization: true,  // AI automatically differentiates speakers
-      isMultichannel: false,
-      participants: [
-        {
-          channel: 0,
-          role: "multiple",
-        },
-      ],
-    },
-    mode: { type: "facts", outputLocale: "en" },
-  },
-};
-```
+The server is responsible for:
 
-### **Dual-Channel (Explicit Roles: Doctor & Patient)**  
-This setup **merges two separate audio streams** (e.g., a local microphone and a WebRTC stream). Instead of diarization, each stream is assigned a **fixed role** (Doctor or Patient).  
+1. **Creating a `CortiClient`** using OAuth2 client credentials (these must never be exposed to the browser).
+2. **Creating an interaction** via the REST API.
+3. **Obtaining a scoped stream token** that only grants access to the streaming WebSocket, which is safe to send to the client.
 
 ```ts
-const DEFAULT_CONFIG: Config = {
-  type: "config",
-  configuration: {
-    transcription: {
-      primaryLanguage: "en",
-      isDiarization: false,  // No automatic speaker detection
-      isMultichannel: false,
-      participants: [
-        { channel: 0, role: "doctor" },  
-        { channel: 0, role: "patient" }, 
-      ],
-    },
-    mode: { type: "facts", outputLocale: "en" },
+import { CortiClient, CortiAuth, CortiEnvironment } from "@corti/sdk";
+import { randomUUID } from "crypto";
+
+const client = new CortiClient({
+  environment: CortiEnvironment.Eu,
+  tenantName: "YOUR_TENANT_NAME",
+  auth: {
+    clientId: "YOUR_CLIENT_ID",
+    clientSecret: "YOUR_CLIENT_SECRET",
   },
-};
+});
+
+const interaction = await client.interactions.create({
+  encounter: {
+    identifier: randomUUID(),
+    status: "planned",
+    type: "first_consultation",
+  },
+});
+
+const auth = new CortiAuth({
+  environment: CortiEnvironment.Eu,
+  tenantName: "YOUR_TENANT_NAME",
+});
+
+const streamToken = await auth.getToken({
+  clientId: "YOUR_CLIENT_ID",
+  clientSecret: "YOUR_CLIENT_SECRET",
+  scopes: ["stream"],
+});
+
+// Send interaction.id and streamToken.accessToken to the client
 ```
+
+### Client (`client.ts`)
+
+The client receives the scoped token and interaction ID, then:
+
+1. **Creates a `CortiClient`** with the scoped access token.
+2. **Connects to the stream** via `client.stream.connect()`.
+3. **Captures and sends audio** using `MediaRecorder`.
+4. **Handles transcript and fact events** from the stream.
+
+```ts
+import { CortiClient, CortiEnvironment } from "@corti/sdk";
+
+const client = new CortiClient({
+  environment: CortiEnvironment.Eu,
+  tenantName: "YOUR_TENANT_NAME",
+  auth: {
+    accessToken: streamToken.accessToken, // Token with "stream" scope
+  },
+});
+
+// This will work – stream is within the token's scope
+const streamSocket = await client.stream.connect({ id: interactionId });
+
+// This would fail – outside the token's scope:
+// await client.transcribe.connect({ id: "..." }); // Error
+// await client.interactions.list();                // Error
+```
+
 ---
 
-## **2. Capturing Audio Streams**  
+## 1. Single Microphone
 
-### **Single Microphone Access**
-Retrieves and returns a **MediaStream** from the user's microphone.  
+**Files:** `singleMicrophone/server.ts`, `singleMicrophone/client.ts`, `singleMicrophone/audio.ts`, `singleMicrophone/index.html`
+
+Uses a single audio source with **speaker diarization** to automatically distinguish multiple speakers.
+
+### Audio Capture (`audio.ts`)
+
+Exposes `getMicrophoneStream()` to access the user's microphone:
+
 ```ts
 const microphoneStream = await getMicrophoneStream();
 ```
 
-### **Merging Two Streams (Microphone + WebRTC)**
-For doctor-patient conversations, we merge two separate audio sources.  
+### Streaming & Events (`client.ts`)
+
 ```ts
-const { stream, endStream } = mergeMediaStreams([microphoneStream, webRTCStream]);
+const streamSocket = await client.stream.connect({ id: interactionId });
+
+const microphoneStream = await getMicrophoneStream();
+const mediaRecorder = new MediaRecorder(microphoneStream);
+mediaRecorder.ondataavailable = (event) => {
+  if (event.data.size > 0) {
+    streamSocket.send(event.data);
+  }
+};
+mediaRecorder.start(200);
+
+streamSocket.on("transcript", (data) => console.log("Transcript:", data));
+streamSocket.on("fact", (data) => console.log("Fact:", data));
 ```
 
-**How Merging Works:**  
-- **Each stream is treated as a separate channel**  
-- **WebRTC provides the remote participant's audio**  
-- **The local microphone captures the speaker on-site**  
-- **The merged stream is sent to Corti’s API**  
+### Cleanup
 
 ```ts
-export const mergeMediaStreams = (mediaStreams: MediaStream[]): { stream: MediaStream; endStream: () => void } => {
+mediaRecorder.stop();
+microphoneStream.getAudioTracks().forEach((track) => track.stop());
+streamSocket.close();
+```
+
+---
+
+## 2. Virtual Consultations
+
+**Files:** `virtualConsultations/server.ts`, `virtualConsultations/client.ts`, `virtualConsultations/audio.ts`, `virtualConsultations/index.html`
+
+Merges two separate audio streams — a **local microphone** (doctor) and a **WebRTC stream** (patient) — into a single multi-channel stream.
+
+### Audio Capture (`audio.ts`)
+
+Exposes two methods, each returning a `MediaStream`:
+
+```ts
+// Local microphone
+const microphoneStream = await getMicrophoneStream();
+
+// Remote participant from WebRTC
+const remoteStream = getRemoteParticipantStream(peerConnection);
+```
+
+### Merging Streams (`client.ts`)
+
+The two streams are merged into a single multi-channel stream where each input maps to a separate channel (channel 0 = doctor, channel 1 = patient):
+
+```ts
+function mergeMediaStreams(mediaStreams: MediaStream[]) {
   const audioContext = new AudioContext();
   const audioDestination = audioContext.createMediaStreamDestination();
   const channelMerger = audioContext.createChannelMerger(mediaStreams.length);
@@ -83,107 +164,70 @@ export const mergeMediaStreams = (mediaStreams: MediaStream[]): { stream: MediaS
     const source = audioContext.createMediaStreamSource(stream);
     source.connect(channelMerger, 0, index);
   });
-
   channelMerger.connect(audioDestination);
 
-  return { 
-    stream: audioDestination.stream, 
+  return {
+    stream: audioDestination.stream,
     endStream: () => {
       audioDestination.stream.getAudioTracks().forEach((track) => track.stop());
       audioContext.close();
-    }
+    },
   };
-};
+}
 ```
 
----
-
-## **3. Establishing WebSocket Connection**  
-Once the audio stream is ready, we establish a WebSocket connection to Corti’s API.  
-
-### **Starting the Audio Flow**  
-```ts
-const { stop } = await startAudioFlow(stream, authCreds, interactionId, handleNewMessage);
-```
-- **Sends real-time audio**
-- **Receives transcription and facts**
-- **Automatically starts when a CONFIG_ACCEPTED message is received**
-
----
-
-## **4. Handling WebSocket Events (Transcripts & Facts)**  
-Each incoming WebSocket message is parsed and stored.  
+### Streaming & Events (`client.ts`)
 
 ```ts
-const transcripts: TranscriptEventData[] = [];
-const facts: FactEventData[] = [];
+const { stream: mergedStream, endStream } = mergeMediaStreams([
+  microphoneStream,
+  remoteStream,
+]);
 
-const handleNewMessage = (msg: MessageEvent) => {
-  const parsed = JSON.parse(msg.data);
-  if (parsed.type === "transcript") {
-    transcripts.push(parsed.data as TranscriptEventData);
-  } else if (parsed.type === "fact") {
-    facts.push(parsed.data as FactEventData);
+const streamSocket = await client.stream.connect({ id: interactionId });
+
+const mediaRecorder = new MediaRecorder(mergedStream);
+mediaRecorder.ondataavailable = (event) => {
+  if (event.data.size > 0) {
+    streamSocket.send(event.data);
   }
 };
+mediaRecorder.start(200);
+
+streamSocket.on("transcript", (data) => console.log("Transcript:", data));
+streamSocket.on("fact", (data) => console.log("Fact:", data));
 ```
 
----
-
-## **5. Stopping & Cleanup**  
-Ensure all resources (WebSocket, MediaRecorder, and merged streams) are properly closed.  
+### Cleanup
 
 ```ts
-stop(); 
+mediaRecorder.stop();
+endStream();
 microphoneStream.getAudioTracks().forEach((track) => track.stop());
-webRTCStream.getAudioTracks().forEach((track) => track.stop());
-endStream(); // Stops the merged audio
-console.log("Call ended and resources cleaned up.");
+remoteStream.getAudioTracks().forEach((track) => track.stop());
+streamSocket.close();
 ```
 
 ---
 
-## **6. Full Flow Example**  
-### **Single-Stream (Diarization Mode)**
-```ts
-async function startSingleStreamCall() {
-  const microphoneStream = await getMicrophoneStream();
-  const { stop } = await startAudioFlow(microphoneStream, authCreds, interactionId, handleNewMessage);
+## File Structure
 
-  return {
-    endCall: () => {
-      stop();
-      microphoneStream.getAudioTracks().forEach((track) => track.stop());
-    },
-  };
-}
+```
+AmbientScribe/
+  README.md
+  singleMicrophone/
+    server.ts     # Auth, interaction creation, scoped token
+    client.ts     # Stream connection, audio send, event handling
+    audio.ts      # getMicrophoneStream()
+    index.html    # Minimal page (output goes to console)
+  virtualConsultations/
+    server.ts     # Auth, interaction creation, scoped token
+    client.ts     # Stream connection, merged audio, event handling
+    audio.ts      # getMicrophoneStream(), getRemoteParticipantStream()
+    index.html    # Minimal page (output goes to console)
 ```
 
-### **Dual-Channel (Doctor-Patient Setup)**
-```ts
-async function startDualChannelCall() {
-  const microphoneStream = await getMicrophoneStream();
-  const webRTCStream = new MediaStream(); // Example WebRTC stream
+## Resources
 
-  const { stream, endStream } = mergeMediaStreams([microphoneStream, webRTCStream]);
-  const { stop } = await startAudioFlow(stream, authCreds, interactionId, handleNewMessage);
-
-  return {
-    endCall: () => {
-      stop();
-      endStream();
-      microphoneStream.getAudioTracks().forEach((track) => track.stop());
-      webRTCStream.getAudioTracks().forEach((track) => track.stop());
-    },
-  };
-}
-```
-
----
-
-## **7. Summary**  
-🚀 **Two streaming options** – single microphone **(diarization)** or **merged dual-channel streams** (doctor-patient).  
-✅ **Minimal setup** – simply plug in credentials and select a mode.  
-📡 **Real-time AI transcription & fact extraction** – powered by **Corti’s API**.  
-
-For further details, refer to **Corti's API documentation**.
+- [`@corti/sdk` on npm](https://www.npmjs.com/package/@corti/sdk)
+- [Corti API documentation](https://docs.corti.ai)
