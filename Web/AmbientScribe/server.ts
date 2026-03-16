@@ -13,10 +13,11 @@
  * exposed to the browser.  Only the scoped stream token is sent to the client.
  */
 
+import "dotenv/config";
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
-import { CortiClient, CortiAuth, CortiEnvironment } from "@corti/sdk";
+import { CortiClient, CortiAuth, CortiEnvironment, type Corti } from "@corti/sdk";
 import { randomUUID } from "crypto";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -59,7 +60,7 @@ async function createInteraction() {
     },
   });
 
-  console.log("Interaction created:", interaction.id);
+  console.log("Interaction created:", interaction.interactionId);
   return interaction;
 }
 
@@ -79,7 +80,7 @@ async function getScopedStreamToken() {
   const streamToken = await auth.getToken({
     clientId: CLIENT_ID,
     clientSecret: CLIENT_SECRET,
-    scopes: ["stream"],
+    scopes: ["streams"],
   });
 
   return streamToken;
@@ -104,7 +105,7 @@ app.post("/api/start-session", async (_req, res) => {
 
     // The client only receives the interaction ID, tenant name, and a limited-scope token.
     res.json({
-      interactionId: interaction.id,
+      interactionId: interaction.interactionId,
       tenantName: TENANT_NAME,
       accessToken: streamToken.accessToken,
     });
@@ -130,15 +131,15 @@ app.post("/api/create-document", async (req, res) => {
     }
 
     // Step 1: Fetch facts collected during the consultation
-    const facts = await client.facts.list(interactionId);
+    const {facts} = await client.facts.list(interactionId);
     console.log(`Fetched ${facts.length} facts for interaction ${interactionId}`);
 
     // Step 2: Map facts into the format expected by the Documents API
-    const factsContext = facts.map((fact: { text: string; group: string; source: string }) => ({
+    const factsContext = facts.map(fact => ({
       text: fact.text,
       group: fact.group,
       source: fact.source,
-    }));
+    })) as Corti.FactsContext[];
 
     // Step 3: Create a document using the collected facts
     const document = await client.documents.create(interactionId, {

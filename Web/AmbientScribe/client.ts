@@ -11,7 +11,7 @@
  * This module has no DOM dependencies — all UI wiring lives in index.html.
  */
 
-import { CortiClient, CortiEnvironment } from "@corti/sdk";
+import { CortiClient, CortiEnvironment, type Corti } from "@corti/sdk";
 import {
   getMicrophoneStream,
   getRemoteParticipantStream,
@@ -40,7 +40,7 @@ export interface SessionOptions {
 }
 
 export interface ActiveSession {
-  endConsultation: () => void;
+  endConsultation: () => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -85,10 +85,40 @@ export async function startSession(
   //   await client.interactions.list();                // outside scope
   //   await client.transcribe.connect({ id: "..." });  // outside scope
 
-  // -- 2. Connect to the Corti streaming WebSocket -------------------------
-  const streamSocket = await client.stream.connect({ id: interactionId });
+  // -- 2. Set up the streaming configuration -------------------------
 
-  // -- 3. Acquire audio depending on mode ----------------------------------
+  const participants = mode === "single" ? [
+    {
+      channel: 0,
+      role: "multiple"
+    }
+  ] : [
+    {
+      channel: 0,
+      role: "doctor"
+    },
+    {
+      channel: 1,
+      role: "patient"
+    }
+  ];
+
+  const configuration = {
+    transcription: {
+      primaryLanguage: "en-US",
+      isMultichannel: mode !== "single",
+      participants,
+    },
+    mode: {
+      type: "facts",
+      outputLocale: "en-US",
+    },
+  } as Corti.StreamConfig;
+
+  // -- 3. Connect to the Corti streaming WebSocket -------------------------
+  const streamSocket = await client.stream.connect({ id: interactionId, configuration });
+
+  // -- 4. Acquire audio depending on mode ----------------------------------
   //    "single"  → just the local microphone
   //    "virtual" → local mic + remote audio (WebRTC or display), merged
 
@@ -128,38 +158,114 @@ export async function startSession(
     audioStream = microphoneStream;
   }
 
-  // -- 4. Stream audio to Corti in 200 ms chunks --------------------------
-  const mediaRecorder = new MediaRecorder(audioStream);
+  // -- 5. Stream audio to Corti in 250 ms chunks --------------------------
+  // Prefer WebM with Opus codec (recommended by Corti), fall back to browser default
+  const supportedMimeTypes = [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/ogg;codecs=opus',
+    'audio/ogg',
+  ];
+  
+  let mimeType: string | undefined;
+  for (const type of supportedMimeTypes) {
+    if (MediaRecorder.isTypeSupported(type)) {
+      mimeType = type;
+      break;
+    }
+  }
 
-  mediaRecorder.ondataavailable = (event: BlobEvent) => {
-    if (event.data.size > 0) {
-      streamSocket.send(event.data);
+  const mediaRecorder = new MediaRecorder(audioStream, mimeType ? { mimeType } : undefined);
+  console.log(`[${mode}] MediaRecorder using mimeType: ${mediaRecorder.mimeType || 'browser default'}`);
+
+  let configAccepted = false;
+  let mediaRecorderStarted = false;
+  let isEnding = false;
+  let endedResolver: (() => void) | null = null;
+
+  mediaRecorder.ondataavailable = async (event: BlobEvent) => {
+    if (event.data.size > 0 && configAccepted && !isEnding) {
+      // Convert Blob to ArrayBuffer as required by sendAudio
+      const arrayBuffer = await event.data.arrayBuffer();
+      streamSocket.sendAudio(arrayBuffer);
     }
   };
 
-  mediaRecorder.start(200);
-  console.log(`[${mode}] MediaRecorder started — streaming audio to Corti`);
+  // -- 6. Handle incoming events -------------------------------------------
+  streamSocket.on("message", (message) => {
+    // Wait for CONFIG_ACCEPTED before starting MediaRecorder
+    if (message.type === "CONFIG_ACCEPTED") {
+      configAccepted = true;
+      console.log(`[${mode}] Configuration accepted, starting MediaRecorder`);
+      if (!mediaRecorderStarted) {
+        mediaRecorderStarted = true;
+        mediaRecorder.start(250);
+        console.log(`[${mode}] MediaRecorder started — streaming audio to Corti`);
+      }
+      return;
+    }
 
-  // -- 5. Handle incoming events -------------------------------------------
-  streamSocket.on("transcript", (data) => {
-    console.log("Transcript:", data);
-    onTranscript?.(data);
+    switch (message.type) {
+      case "transcript":
+        console.log("Transcript:", message);
+        onTranscript?.(message);
+        break;
+      case "facts":
+        console.log("Facts:", message);
+        onFact?.(message);
+        break;
+      case "usage":
+        console.log("Usage:", message);
+        break;
+      case "ENDED":
+        console.log(`[${mode}] Session ended by server`);
+        if (endedResolver) {
+          endedResolver();
+          endedResolver = null;
+        }
+        break;
+      default:
+        console.log("Unhandled message type:", message.type);
+        break;
+    }
   });
 
-  streamSocket.on("fact", (data) => {
-    console.log("Fact:", data);
-    onFact?.(data);
-  });
+  // -- 7. Return cleanup function ------------------------------------------
+  let endedPromise: Promise<void> | null = null;
 
-  // -- 6. Return cleanup function ------------------------------------------
   return {
-    endConsultation: () => {
-      // Stop recording
+    endConsultation: async () => {
+      // If already ending, wait for the existing promise
+      if (isEnding && endedPromise) {
+        await endedPromise;
+        return;
+      }
+
+      isEnding = true;
+      console.log(`[${mode}] Ending consultation...`);
+
+      // Create promise to wait for ENDED message
+      endedPromise = new Promise<void>((resolve) => {
+        endedResolver = resolve;
+      });
+
+      // Stop recording first
       if (mediaRecorder.state !== "inactive") {
+        // Request any remaining buffered audio before stopping
+        if (mediaRecorder.state === "recording") {
+          mediaRecorder.requestData();
+        }
         mediaRecorder.stop();
       }
 
-      // Close the stream socket
+      // Send end message to server
+      streamSocket.sendEnd({ type: "end" });
+
+      // Wait for ENDED message before cleaning up resources
+      // The server will send usage message, then ENDED
+      await endedPromise;
+
+      // Now clean up resources after receiving ENDED
       streamSocket.close();
 
       // Release the merged stream (virtual mode only)

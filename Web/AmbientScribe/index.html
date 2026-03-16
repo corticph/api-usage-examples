@@ -117,11 +117,16 @@
     });
 
     // -- End Consultation ----------------------------------------------------
-    endBtn.addEventListener("click", function () {
+    endBtn.addEventListener("click", async function () {
+      // set a loading state
+      endBtn.disabled = true;
+      endBtn.innerHTML = "Ending...";
       if (session) {
-        session.endConsultation();
+        await session.endConsultation();
         session = null;
       }
+      endBtn.disabled = false;
+      endBtn.innerHTML = "End Consultation";
       setButtonStates("stopped");
     });
 
