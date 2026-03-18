@@ -1,1 +1,1 @@
-Repository has retired in favor of [Corti Examples](https://github.com/corticph/corti-examples) repository 🤍
+This repository has been retired in favor of the [Corti Examples](https://github.com/corticph/corti-examples) repository. Please open new issues and pull requests in that repository.
